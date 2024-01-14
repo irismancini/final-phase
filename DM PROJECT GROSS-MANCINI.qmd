@@ -1,0 +1,776 @@
+---
+title: "DM PROJECT GROSS-MANCINI"
+format: 
+  html:
+    citeproc: false
+    filters:
+      - "citeproc.lua"
+      - "wordcount.lua"
+editor: visual
+author: "Leopold Gross and Iris Mancini"
+code-fold: true
+---
+
+```{r, echo = FALSE, message = FALSE}
+
+here::i_am("gross-mancini.final.Rproj")
+library(here)
+library(vroom)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggplotlyExtra)
+library(plotly)
+library(patchwork)
+library(stringr)
+library(viridis)
+library(gridExtra)
+```
+
+## I - Research question presentation
+
+Over the course of this report, we will take interest in multiple demographic and macroeconomic variables observed in France in year 2020. Using two public dataframes, we will study the possible links between labor pools location, hiring difficulties and poverty rates, unemployment rates and social housing rates, per "departement", a French geographical division. Some questions obviously arise: does constructing more social housing imply increasing unemployment and poverty ? Is social housing near of far from labor pools ? Are poverty and unemployment more important in departements with fewer labor pools ? Which type of jobs tend to hire the most ? Is there a link between poverty, unemployment, social housing rates and the age distribution ? We will answer theses questions, and some more with a set of graphical representations, correlations and linear regressions.
+
+## II - Data sets descriptions:
+
+```{r, message = FALSE, echo = FALSE}
+
+# Loading our datasets:
+log_soc <- vroom(here("data", "logements-sociaux copie.csv"))
+bassin_emploi <- vroom(here("data", "bassin_emploi copie.csv"))
+
+# We eliminate variables that won't be relevant to the analysis: 
+log_soc <-  log_soc |>
+  select(-geom, -geo_point_2d, -parc_social_taux_de_logements_energivores_e_f_g_en)
+
+# We drop the year variable since all our observations are from 2020: 
+bassin_emploi <- bassin_emploi |>
+  select(-annee)
+
+# We drop the missing values: 
+bassin_emploi1 <- bassin_emploi |> mutate(across(c(met, xmet, smet), ~na_if(., "*")))
+```
+
+### 1. First dataset: Structure of the french employment supply according to the labor pools:
+
+The data contained in the first database come from a survey carried out by Pôle Emploi as part of the *Besoins en main d'œuvre 2020* (Manpower requirements 2020) survey. The overall aim of this survey is to indentify sectors of areas struggling to hire.
+
+The data concern the 2020 year and give us information on the structure of labor supply in France, by Departement and Regions. Pole emploi uses a classification by labor pool ("bassin d'emploi").
+
+"The"bassin d'emploi", is a geographical area in which jobseekers and their agencies are distributed. At the end of 2020, there were 409 employment areas. Each employment area belongs to one, and only one, French region. However, an employment area can straddle several départements.
+
+The database contains observations on the number of recruitment projects, i.e. the number of job positions to be filled, depending on the labor pool and the activity sector. It also provides us information on the number of "difficult projects", i.e. the number of job positions for which recruiters struggle to find an adequate candidate. 
+
+Our database contains 14 variables : 
+
+année (year) : this variable represents the year the observation has been collected. All our observations are from 2020. 
+
+code métier BMO (profession ID) : this variable is a character string with two letters and three digits. Each code is associated with a type of profession.
+
+nom_metier BMO (profession name) : name of the type of profession (associated to the previous ID). 
+
+Famille_met : Profession family code/ID. The variable can take as value a letter (A to Z), each letter is associated to a certain category (family) of profession. For example, "O" stands for construction workers.
+
+Lbl_fam_met : Profession category/family name. Associated to the previous ID. 
+
+BE23 : Labor pool code/ID. (Labor pool definition : Geographical area within which most jobs held by residents of the same area are located). 
+
+NOMBE23 : Name of the labor pool. Associated with the previous ID. 
+
+Dept : department code (ID). This variable is the one we are going to use as the common variable between our two datasets. 
+
+NomDept : Name of the departments. Associated with the previous ID. 
+
+REG : Insee regional code. ID for each region, the variable takes as value a number associated to a region. 
+
+NOM_REG : name of each region. Associated with the previous ID.
+
+met : number of recruitment projects. "The number of recruitment projects is the total number of new hires anticipated by employers over the year (all recruitment channels combined: job centers, unsolicited applications, etc.)." (Pôle Emploi website).
+
+xmet : Number of recruitment projects considered difficult (for which the recruiters struggle to find an employee due to either a lack of suitably qualified candidates, or to an imbalance between supply and demand on the job market.)
+
+smet : Number of seasonal recruitment projects.
+
+### Basic information about the dataset:
+
+```{r, echo = FALSE, message=FALSE}
+
+info_be <- bassin_emploi1 |>
+  summarise("Title" = "Summary table for labor pools data",
+    "number of rows"=n(),
+            "number of columns"=ncol(bassin_emploi1),
+            "number of labor pools"= length(unique(bassin_emploi1$BE20)),
+            "Number of recruitment projects in 2020"= sum(as.numeric(unlist(bassin_emploi1$met)), na.rm = TRUE), 
+            "Number of difficult recruitment projects in 2020"= sum(as.numeric(unlist(bassin_emploi1$xmet)), na.rm = TRUE), 
+    "Average number of recruitment projects by labor pool" = (sum(as.numeric(unlist(bassin_emploi1$met)), na.rm = TRUE))/length(unique(bassin_emploi1$BE20)),
+    "Average number of difficult recruitment projects by labor pool" = (sum(as.numeric(unlist(bassin_emploi1$xmet)), na.rm = TRUE))/length(unique(bassin_emploi1$BE20)))
+
+info_be |>
+  knitr::kable()
+```
+
+### 2. Second dataset: demographic indicators of the social housing stock by french department
+
+The dataset comes from the Sitadel2 database, produced by INSEE, the social rental stock directory (RPLS) and CDC. It was published in 2023, and provides us with demographic indicators, on French departments, relevant to the analysis of the housing sector, particularly social housing facilities, for the years 2016 to 2020. (**Each observation is published two years later, so that if "annee_publication" = 2022, we know that it concerns the year 2020**). Therefore, we will only keep the data published in 2022, corresponding to the 2020 data of our previous dataset.
+
+Thus for each department, we have a variety of different indicators such as the poverty rate, or the unemployment rate. What is interesting is that those indicators are provided in addition to the indicators describing the structure of the social housing market.
+
+The variable we have in common with the other dataset is departments. Each department appears once in this dataset, while it can appear several times in the other one.
+
+This second database contains 30 variables (some will be eliminated during the data cleaning phase as they will not be useful for our analysis) : 
+
+annee_publication : year of publication of the observation. The year of each observation corresponds to N-2 year of publication.
+
+code_departement :  department id. Each department has an id, and this classification is the same all around France (this is our common variable with the other dataset)
+
+nom_departement: name of the department. Associated with the previous ID
+
+code_region : regional id. 
+
+nom_region : name of the region. Associated with the previous ID
+
+nombre_d_habitants : number of inhabitants
+
+densite_de_population_au_km2 : population density per square kilometer. Average number of inhabitants in a square km. 
+
+variation_de_la_population_sur_10_ans_en: Population change over the last 10 years (in %), within the department. 
+
+dont_contribution_du_solde_naturel_en : Part of the population change over the last ten year that is due to the natural balance (in %)
+
+dont_contribution_du_solde_migratoire_en : Part of the population change over the last ten year that is due to the net migration (in %)
+
+population_de_moins_de_20_ans : percentage of the total population that is under 20 years old.
+
+population_de_60_ans_et_plus : percentage of the population that is above 60 years old.
+
+taux_de_chomage_au_t4_en : unemployment rate at the fourth trimester (in %). 
+
+taux_de_pauvrete_en : poverty rate (in %)
+
+nombre_de_logements : number of housing units
+
+nombre_de_residences_principales : number of principal residences
+
+taux_de_logements_sociaux_en : share of social housing (in %) 
+
+taux_de_logements_vacants_en : percentage of vacant dwellings 
+
+taux_de_logements_individuels_en : percentage of single-family homes 
+
+moyenne_annuelle_de_la_construction_neuve_sur_10_ans : Annual average for new construction over 10 years: 
+
+parc_social_nombre_de_logements : Social housing stock - Number of units
+
+parc_social_logements_mis_en_location : Social housing stock - Rented units 
+
+parc_social_logements_demolis : Social housing - Demolished dwellings:
+
+parc_social_ventes_a_des_personnes_physiques : Social housing - Sales to individuals: 
+
+parc_social_taux_de_logements_vacants_en : Social housing stock - Vacancy rate (%)
+
+parc_social_taux_de_logements_individuels_en : Social housing stock - Percentage of single-family dwellings (%): 
+
+parc_social_loyer_moyen_en_eur_m2_mois : Social housing stock - Average rent (in €/m²/month)
+
+parc_social_age_moyen_du_parc_en_annees : Social housing stock - Average age (in years): 
+
+parc_social_taux_de_logements_energivores_e_f_g_en : Social housing stock - Rate of energy-inefficient dwellings (E,F,G) (in %)
+
+```{r, echo=FALSE, message=FALSE}
+log_soc <- log_soc |>
+  filter(annee_publication=="2022")
+```
+
+### Basic informations about the dataset:
+
+```{r, echo = FALSE, message=FALSE}
+
+info_soc_hous <- log_soc |>
+  summarise("Title" = "Social housing summary table", 
+            "number of rows"=n(),
+            "number of columns"=ncol(log_soc),
+            "Average unemployment rate across France in 2020" = mean(taux_de_chomage_au_t4_en, na.rm = TRUE), 
+            "Average number of housing facilities across France in 2020" = mean(nombre_de_logements, na.rm = TRUE), 
+            "Average number of social housings across France in 2020" = mean(parc_social_nombre_de_logements, na.rm = TRUE))
+
+info_soc_hous |>
+  knitr::kable()
+```
+
+```{r, echo=FALSE, message=FALSE}
+
+# Those variables won't be useful for the rest of the analysis: 
+bassin_emploi <- bassin_emploi1 |>
+  select(-nommetier, -Lbl_fam_met, -NOMBE20, -NomDept, -NOM_REG)
+
+```
+
+```{r, echo=FALSE, message=FALSE}
+
+# Creating the table for the annex
+dpt_id <- log_soc |>
+  distinct(code_departement, nom_departement) |>
+  arrange(code_departement) 
+
+dpt_id <- dpt_id[complete.cases(dpt_id), ] #we eliminate rows containing NA values
+
+
+# Dropping useless variables: 
+
+log_soc <- log_soc |>
+  select(-nom_departement, -nom_region) 
+
+```
+
+In annex you will be able to find the tables containing the labels of each variable to which an ID code is associated.
+
+## III - Data analysis
+
+As mentioned previously our common variable is the variable of the code department. We merge our two datasets, and the merged dataset contains the following information:
+
+```{r, message = FALSE, echo = FALSE}
+
+# Merge: 
+
+  # We make sure that the common variable is named the same in both datasets. 
+log_soc <- log_soc |>
+  rename("Dept" = code_departement)
+
+  # We merge the two datasets
+merge_df <- merge(bassin_emploi, log_soc, by = "Dept")
+
+  # We count the missing values:
+na_count <- apply(merge_df[c("met", "xmet", "smet")], 1, function(x) sum(is.na(x)))
+
+  # We eliminate lines in which there are more than three missing values, so we have all the informations concerning the number of recruitment projects. 
+merge_filtered <- merge_df[na_count < 3, ] 
+```
+
+As mentioned previously our common variable is the variable of the code department. We merge our two datasets, and the merged dataset contains the following information:
+
+each line of the merged dataset corresponds to the number of recruitment project (met), the number of difficult recruitment project (xmet), for a specific job (met), the job family to which this job belongs (family_met), in a specific labor pool (BE20). Then we also know to which department it belongs and so we have all the demographic indicators associated to the department (poverty rate, unemployment rate, social housing rate etc...).
+
+The following table displays, for each unique departement, the numeric code of the labor pools, the total amount of labor pools, the poverty and unemployment rates, and the type of jobs concerned by the labor pools.
+
+```{r, message = FALSE, echo = FALSE}
+
+Pools_per_dept <- merge_df |> group_by(Dept, BE20) |> summarise(count=n()) |> group_by(Dept) %>% summarise(nombre_bassins = n()) |> arrange(desc(nombre_bassins))
+
+poverty_per_dept <- merge_filtered |> distinct(Dept, .keep_all = TRUE) |> group_by(Dept) |> select(Dept, taux_de_pauvrete_en) |> filter(!is.na(taux_de_pauvrete_en))
+
+pauvreté_et_emploi <- merge(Pools_per_dept, poverty_per_dept, by = "Dept")
+test <- merge_filtered |> group_by(Dept) |> summarise(BE20 = toString(unique(BE20)), Fam_metier = toString(unique(Famille_met)) ) 
+
+U_per_dept <- merge_filtered |>  distinct(Dept, .keep_all = TRUE) |> group_by(Dept) |> select(Dept, taux_de_chomage_au_t4_en) |> filter(!is.na(taux_de_chomage_au_t4_en))
+
+
+tab1 <- test |> inner_join(U_per_dept, by ="Dept") |> inner_join(poverty_per_dept, by="Dept") |> rename("chômage au t4 (%)" = taux_de_chomage_au_t4_en, "pauvreté (%)" = taux_de_pauvrete_en)  |> mutate("nombre de bassins"=str_count(BE20, ",")+1)
+knitr::kable(tab1)
+
+```
+
+#### III. 1. First correlations :
+
+##### • Correlation between social housing and poverty rate:
+
+```{r, message=FALSE, echo=FALSE}
+
+log_soc_no_na <- log_soc |>
+  filter(!is.na(taux_de_logements_sociaux_en) & !is.na(taux_de_pauvrete_en))
+
+ggplot(log_soc_no_na, aes(x=taux_de_pauvrete_en, y=taux_de_logements_sociaux_en)) +
+  geom_point(aes(color = taux_de_pauvrete_en)) +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title = "Social housing rates and poverty rate in France, by department",
+       subtitle = "Correlation analysis between social housing and poverty",
+       x = "Social Housing Rate",
+       y = "Poverty Rate",
+       color = "Poverty Rate") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+        axis.title = element_text(size = 12),
+        legend.position = "right") +
+  scale_color_viridis()
+
+```
+
+```{r, message = FALSE, echo = FALSE}
+
+correlation1 <- cor(log_soc_no_na$taux_de_logements_sociaux_en, log_soc_no_na$taux_de_pauvrete_en)
+
+knitr::kable(correlation1)
+
+```
+
+There is an existing correlation between social housing rate and poverty rate however it is very low.
+
+##### • Correlation between social housing and unemployment :
+
+```{r, message = FALSE, echo = FALSE}
+
+correlation3 <- cor(log_soc_no_na$taux_de_chomage_au_t4_en, log_soc_no_na$taux_de_logements_sociaux_en)
+knitr::kable(correlation3)
+```
+
+Again, it is low.
+
+*We can try to have a confirmation of these results by plotting the poverty rate depending on the annual average amount of social housing built (data taken over the last 10 years). This allows us to check the validity of the result including a time dependent variable.*
+
+```{r, echo=FALSE, message=FALSE}
+
+ggplot(log_soc_no_na, aes(x = reorder(Dept, moyenne_annuelle_de_la_construction_neuve_sur_10_ans), group = 1)) +
+  
+  geom_point(aes(y = taux_de_pauvrete_en, color = taux_de_pauvrete_en, group = 1)) +
+  geom_smooth(aes(y = taux_de_pauvrete_en), method = "lm", se = FALSE, color = "lightblue") +
+ 
+   labs(title = "Poverty rate by departement, 
+        in ascending order of social housing annual average building",
+       y = "poverty rate",
+       x = "Departement", 
+       color = "Poverty rate") +
+      theme_minimal() + 
+  theme(plot.title = element_text(size = 14, face = "bold"), 
+        axis.text.x = element_text(angle = 90, hjust = 0.5, size = 5), 
+        legend.position = "right") 
+```
+
+Departements are classed in ascending order of social housing average annual building. We can see that this time, the correlation is again very low, but also negative. **This allows us to conclude that building social housing isn't strongly correlated to the building of social housing (from the 10 last years).**
+
+```{r, echo=FALSE, message=FALSE}
+ggplot(log_soc_no_na, aes(x = reorder(Dept, moyenne_annuelle_de_la_construction_neuve_sur_10_ans), group = 1)) +
+  
+  geom_point(aes(y = taux_de_chomage_au_t4_en, color = taux_de_chomage_au_t4_en, group = 1)) +
+
+  geom_smooth(aes(y = taux_de_chomage_au_t4_en), method = "lm", se = FALSE, color = "lightgreen") +
+ 
+   labs(title = "Unemployment rate by departement, 
+        in ascending order of social housing annual average building",
+       y = "Unemployment rate",
+       x = "Departement", 
+       color = "Unemployment rate") +
+      theme_minimal() + 
+  theme(plot.title = element_text(size = 14, face = "bold"), 
+        axis.text.x = element_text(angle = 90, hjust = 0.5, size = 5), 
+        legend.position = "right") + 
+  scale_color_viridis_c()
+```
+
+With unemployment this time, there is a light positive correlation:
+
+```{r, echo=FALSE, message=FALSE}
+
+correlation4 <- cor(log_soc_no_na$taux_de_chomage_au_t4_en, log_soc_no_na$moyenne_annuelle_de_la_construction_neuve_sur_10_ans)
+knitr::kable(correlation4)
+```
+
+We execute a correlation test to be 100% sure:
+
+```{r, echo=FALSE, message=FALSE}
+
+cor_test <- cor.test(log_soc_no_na$taux_de_chomage_au_t4_en, log_soc_no_na$moyenne_annuelle_de_la_construction_neuve_sur_10_ans, method = "pearson")
+print(cor_test)
+```
+
+This correlation test cumputes a p-value of 0.2315, which is too high to reject the null-hypothesis of uncorrelation. **Building social housing does not significantely increase unemployment.**
+
+However, the correlation between poverty rate and unemployment is absolutely clear, **it positively strongly linked:**
+
+```{r, message = FALSE, echo = FALSE}
+
+correlation2 <- cor(log_soc_no_na$taux_de_chomage_au_t4_en, log_soc_no_na$taux_de_pauvrete_en)
+knitr::kable(correlation2)
+```
+
+### III. 2. Analyzing job sectors:
+
+*This table allows us to observe which type of jobs hire the most.*
+
+```{r, message = FALSE, echo = FALSE}
+
+job_fam_id <- bassin_emploi1 |>
+  distinct(Famille_met, Lbl_fam_met)
+
+met_par_fam <- merge_filtered |> 
+  mutate(met = as.numeric(met)) |> 
+  group_by(Famille_met) |> 
+  summarise(nb_met = sum(met, na.rm = TRUE)) |> 
+  arrange(desc(nb_met)) |> 
+  inner_join(job_fam_id, by = "Famille_met") |>
+  rename(`Job Family ID` = Famille_met, 
+         `Nb of recrutement project` = nb_met,
+         `Job Family Label` = Lbl_fam_met)
+
+knitr::kable(met_par_fam)
+```
+
+Overall, the sales/tourism/services sector is the one for which the recruiters are the most looking for workers. This is only a general overlook.
+
+We create a table which will summarize the hirings and difficult hiring by departement, along the previous macroeconomic variables. *(We chose not to include the table in the html since it is very large, however you can find it in the qmd.)*
+
+```{r, message=FALSE, echo=FALSE}
+
+# The important information contained in that table is the proportion of difficult rectuitment project: 
+met_par_dept <- merge_filtered |>
+  mutate(met=as.numeric(met)) |>
+  mutate(xmet=as.numeric(xmet)) |>
+  group_by(Dept) |>
+  summarise(nb_met = sum(met, na.rm = TRUE), nb_xmet = sum(xmet, na.rm = TRUE), log_soc = mean(taux_de_logements_sociaux_en), unemployment = mean(taux_de_chomage_au_t4_en), poverty_rate = mean(taux_de_pauvrete_en)) |>
+  arrange(desc(nb_met)) |>
+  mutate(proportion_xmet = (nb_xmet/nb_met)) 
+
+met_par_dept$proportion_xmet <- round(met_par_dept$proportion_xmet, 2)
+```
+
+##### • Correlation between the poverty rate and the share of difficult recruitment projects (among all recruitment projects), per department:
+
+```{r, message=FALSE, echo=FALSE}
+
+correlation9_PovProp <- cor(met_par_dept$proportion_xmet, met_par_dept$poverty_rate)
+knitr::kable(correlation9_PovProp)
+```
+
+It is strongly and negatively correlated. Let's put it in a graphical way:
+
+```{r, message=FALSE, echo = FALSE}
+
+met_par_dept_f <- met_par_dept |>
+  filter(!is.na(proportion_xmet) & !is.na(poverty_rate) & 
+         is.finite(proportion_xmet) & is.finite(poverty_rate))
+
+ggplot(met_par_dept_f, aes(x = proportion_xmet, y = poverty_rate)) +
+  geom_point(aes(color = poverty_rate)) +  
+  geom_smooth(method = "lm", se = FALSE, color = "lightblue") +  
+  labs(
+    title = "Recruitment difficulties and poverty rates by département in France",
+    subtitle = "Analysis of the correlation between the share of difficult recruitment projects among the total recruitment projects and the poverty rate",
+    x = "Share of difficult recruitment projects per department",
+    y = "poverty rate of the department", 
+    color = "Poverty share"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),
+    plot.subtitle = element_text(size = 12),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10),
+    legend.position = "right"
+  ) +
+  scale_color_viridis_c()  
+
+met_par_dept$tranche_prop <- cut(met_par_dept$proportion_xmet, breaks = c(0,0.4,0.5,0.6,0.7,0.8,0.9,1 ), 
+                           labels = c("< 40%", "40-50%", "50-60%", "60-70%", "70-80%", "80-90 %", "> 90%"), include.lowest = TRUE) 
+
+met_par_dept$tranche_pauvreté <- cut(met_par_dept$poverty_rate, breaks = c(1,12,14,16,18,40), 
+                           labels = c("poverty rate < 12%", "poverty rate 12-14%", "poverty rate 14-16%", "poverty rate 16-18%", "poverty rate > 18%"),
+                           include.lowest = TRUE)
+
+met_par_dept <- na.omit(met_par_dept)
+ggplot(met_par_dept, aes(x = tranche_prop, color = tranche_prop)) +
+  geom_bar() +
+  labs(title = "Number of departments by Recruitment Difficulty Range",
+       x = "Level of recruitment difficulty",
+       y = "Number of departments", 
+       color = "Share of difficult
+       recruitment projects") +
+  theme_minimal() +
+  facet_wrap(~tranche_pauvreté) + 
+   theme(plot.title = element_text(size = 14, face = "bold"),
+        axis.title = element_text(size = 12),
+        legend.position = "right", 
+        axis.text.x = element_blank()) 
+
+```
+
+So we can say that there is a negative correlation between the poverty rate and the rate of difficulty of recruitment, per department.
+
+##### • Correlation between the unemployment rate and the share of difficult recruitment projects (among all recruitment projects), per department:
+
+```{r, message = FALSE, echo = FALSE}
+
+correlation10_UProp <- cor(met_par_dept$proportion_xmet, met_par_dept$unemployment)
+knitr::kable(correlation10_UProp)
+```
+
+```{r, message = FALSE, echo = FALSE}
+
+met_par_dept_f2 <- met_par_dept |>
+  filter(!is.na(proportion_xmet) & !is.na(unemployment) & 
+         is.finite(proportion_xmet) & is.finite(unemployment))
+
+ggplot(met_par_dept_f2, aes(x = proportion_xmet, y = unemployment )) +
+  geom_point(aes(color = unemployment)) +  
+  geom_smooth(method = "lm", se = FALSE, color = "lightpink") +  
+  labs(
+    title = "Recruitment difficulties and unemployment by département in France",
+    subtitle = "Analysis of the correlation between the share of difficult recruitment projects among the total recruitment projects and the unemployment rate",
+    x = "Share of difficult recruitment projects per department",
+    y = "unemployment rate of the department", 
+    color = "Unemployment share"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),
+    plot.subtitle = element_text(size = 12),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10),
+    legend.position = "right",
+  ) +
+  scale_color_viridis_c()  
+```
+
+There is a negative correlation between the unemployment rate per department and the share of difficult recruitment projects per department.
+
+Previously, we had seen that the poorer a departement is, the more unemployment there is. This new result tends to confirm the latter: **the richer a departement is, the less unemployment there is, therefore making it difficult to hire as the departement is closer to full-employment.**
+
+##### • Correlation between social housing rate and the share of difficult recruitment projects (among all recruitment projects), per department:
+
+```{r, message = FALSE, echo = FALSE}
+cor_logsoc_dif <- cor(met_par_dept$log_soc, met_par_dept$proportion_xmet)
+knitr::kable(cor_logsoc_dif)
+```
+
+### III. 3. Demographical effects:
+
+*By now, we may try to test the impact of the share of age per departement on the same variables.*
+
+```{r, message = FALSE, echo = FALSE}
+
+age_per_dept <- log_soc_no_na |>
+  group_by(Dept) |> 
+  summarise(population_de_moins_de_20_ans, population_de_60_ans_et_plus, taux_de_logements_sociaux_en) |> 
+  rename("% < 20 years"=population_de_moins_de_20_ans, "% > 60 years" = population_de_60_ans_et_plus)
+
+full_info_par_dept <- met_par_dept |> inner_join(age_per_dept, by="Dept") |> rename("social housing rate"= taux_de_logements_sociaux_en)
+
+```
+
+```{r, message=FALSE, echo=FALSE}
+
+jeunes_corr_xmet <-cor(full_info_par_dept$proportion_xmet, full_info_par_dept$`% < 20 years`)
+vieux_corr_xmet <- cor(full_info_par_dept$proportion_xmet, full_info_par_dept$`% > 60 years`)
+
+jeunes_corr_poverty <- cor(full_info_par_dept$poverty_rate, full_info_par_dept$`% < 20 years`)
+vieux_corr_poverty <- cor(full_info_par_dept$poverty_rate, full_info_par_dept$`% > 60 years`)
+
+jeunes_corr_U <-cor(full_info_par_dept$unemployment, full_info_par_dept$`% < 20 years`)
+vieux_corr_U <-cor(full_info_par_dept$unemployment, full_info_par_dept$`% > 60 years`)
+
+jeunes_corr_logsoc <- cor(full_info_par_dept$`social housing rate`, full_info_par_dept$`% < 20 years`)
+vieux_corr_logsoc <- cor(full_info_par_dept$`social housing rate`, full_info_par_dept$`% > 60 years`)
+
+correlation_table <- data.frame(
+  Variable = c("Proportion Xmet", "Poverty (%)", "Unemployment (%)", "Social housings (%)"),
+  "Correlation with the share < 20 years" = c(jeunes_corr_xmet, jeunes_corr_poverty, jeunes_corr_U, jeunes_corr_logsoc),
+  "Correlation with the share > 60 years" = c(vieux_corr_xmet, vieux_corr_poverty, vieux_corr_U, vieux_corr_logsoc)
+)
+
+knitr::kable(correlation_table)
+```
+
+There is no significant correlation except for two relationships :
+
+-   the one between the share of social housing and the share of the population being under 20 years old =\> it exhibits a positive correlation.
+
+-   the one between the share of social housing and the share of the population being above 60 years old =\> It exhibits a negative correlation.
+
+**A younger population lives in areas with more social housing.**
+
+### III. 4 Model fitting : Recruitment difficulties and job families:
+
+*The following table displays the part of difficult recruitment projects for each family job.*
+
+```{r, message=FALSE, echo=FALSE}
+
+pauvreté_et_emploi <- pauvreté_et_emploi |> arrange(desc(taux_de_pauvrete_en))
+
+# We use the merged dataset to calculate the share of difficult recruitment project for each type of job.
+difficulty <- merge_filtered |> 
+  mutate(xmet = as.numeric(xmet), met = as.numeric(met))  |> 
+  mutate(proportion_xmet = xmet / met)  |> filter(!is.na(met) & !is.na(xmet))
+
+# We group by the job families and by the department, and obtain the mean share of difficult project for each family job in each department
+difficulty_perfam <- difficulty |> 
+  group_by(Dept, Famille_met) |> 
+  summarise(mean_dif_per_fam = mean(proportion_xmet), .groups = "drop") |>
+  inner_join(job_fam_id)
+
+# We create a dataframe in which we group by the job families and obtain the mean share of difficult recruitment project for each family.
+FamMet_diff <- difficulty_perfam |>
+  group_by(Famille_met) |>
+  summarize(mean_dif = mean(mean_dif_per_fam)) |>
+  inner_join(job_fam_id) |>
+  rename("Job Family" = Famille_met, "Share of difficulty" = mean_dif, "Family job label" = Lbl_fam_met)
+
+FamMet_diff |> 
+    knitr::kable()
+```
+
+Considering the whole country, the sector (job family) which struggles to hire the most is the "Ouvriers des secteurs de l'industrie".
+
+##### • Chi-square test:
+
+*By using a chisquare test we are going to test if there is a dependence between the sector of activiy in which the department struggles the most to recruit and the poverty rate.*
+
+The contingency table and the result of the chi-square test:
+
+```{r, message=FALSE, echo=FALSE, warning = FALSE}
+
+# This table displays for each department, the sector in which it struggles the most and the least, and their respective share of difficult recruitment project
+tab_max_min <- difficulty_perfam |> group_by(Dept) |> 
+summarise(
+    xmet_rate_max = max(mean_dif_per_fam),
+    xmet_rate_min = min(mean_dif_per_fam),
+    fam_max = Famille_met[which.max(mean_dif_per_fam)],
+    fam_min = Famille_met[which.min(mean_dif_per_fam)],
+    .groups = "drop"
+          )
+
+# We need to create a contingency table to realize the Chisquare test : 
+
+  # We need to create classes for our poverty rate : 
+  pauvreté_et_emploi$tranche_pauvrete <- cut(pauvreté_et_emploi$taux_de_pauvrete_en, breaks = c(1,12,14,16,18,40), 
+                           labels = c("inférieur à 12%", "12-14%", "14-16%", "16-18%", "supérieur à 18%"),
+                           include.lowest = TRUE)
+
+  # We join our dataframes
+  tot <- pauvreté_et_emploi |> 
+  inner_join(tab_max_min)
+  
+  # We create the contingency table : 
+  contingence <- table(tot$tranche_pauvrete, tot$fam_max)
+
+contingence |>
+  knitr::kable()
+
+result <- chisq.test(contingence)
+print(result)
+```
+
+The chi-square test, exhibits a low value for the p-value, so we don't reject the null hypothesis. However the test is incomplete, it only allows us to assume that there is no dependance between the rate of poverty and the sector in which the department struggles the most to hire. However, what about the relationship between sectors : if a department struggles to hire in one sector, is that because the other sectors attract more workers?
+
+##### • The linear regression models
+
+*In this last analysis we will analyse how does the difficulty to hire in one sector affect the difficulty to hire in another one.*
+
+To do so, we build a model for each job family (sector). In each model, the sector will be the dependent variables, while the other sectors are the explanatory variables. As we saw previously, unemployment, social housing and the poverty rate are correlated to the difficulty for a department to hire. So we add those variables as instrumental variables and in this way control their effect.
+
+```{r, message=FALSE, echo = FALSE}
+
+# creation of a dataframe containing the rate of social housing for each department.
+logsoc_per_dept <- merge_filtered |>
+  distinct(Dept, .keep_all = TRUE) |>
+  group_by(Dept) |> 
+  select(Dept, taux_de_logements_sociaux_en) |>
+  filter(!is.na(taux_de_logements_sociaux_en))
+
+# preparation of the dataframe we will use for the analysis
+pre_secteur <- difficulty |> 
+  group_by(Famille_met, Dept) |> 
+  summarise(mean_dif_per_fam = mean(proportion_xmet), .groups = "drop")
+
+# creation of the dataframe we will use to conduct the analysis
+# each line is a department, then we have the proportion of difficult recruitment project for each family job for each department as well as the demographic indicators mentioned above.
+secteur <- pre_secteur |>
+                 pivot_wider(names_from = Famille_met, values_from = mean_dif_per_fam, 
+                             values_fill = list(mean_dif_per_fam = 0)) |>
+            inner_join(pauvreté_et_emploi)|>
+            inner_join(U_per_dept) |>
+            inner_join(logsoc_per_dept)
+```
+
+```{r, echo=FALSE, message=FALSE}
+
+# linear regression to test the effect of the other sectors (controled by demographic indicators), on the sector A : Fonctions administratives
+modeleA <- lm(A ~ C + I + O + S + T + V + Z + taux_de_chomage_au_t4_en + taux_de_pauvrete_en + taux_de_logements_sociaux_en, data = secteur)
+summary(modeleA)
+
+# linear regression to test the effect of the other sectors (controled by demographic indicators), on the sector C : FFonctions d'encadrement
+modeleC <- lm(C ~ A + I + O + S + T + V + Z + taux_de_chomage_au_t4_en + taux_de_pauvrete_en + taux_de_logements_sociaux_en, data = secteur)
+summary(modeleC)
+
+# linear regression to test the effect of the other sectors (controled by demographic indicators), on the sector I : Ouvriers des secteurs de l'industrie
+modeleI <- lm(I ~ A + C + O + S + T + V + Z + taux_de_chomage_au_t4_en + taux_de_pauvrete_en + taux_de_logements_sociaux_en, data = secteur)
+summary(modeleI)
+
+# linear regression to test the effect of the other sectors (controled by demographic indicators), on the sector O : Ouvriers de la construction et du bâtiment
+modeleO <- lm(O ~ A + I + C + S + T + V + Z + taux_de_chomage_au_t4_en + taux_de_pauvrete_en + taux_de_logements_sociaux_en, data = secteur)
+summary(modeleO)
+
+# linear regression to test the effect of the other sectors (controled by demographic indicators), on the sector S : 	Fonctions sociales et médico-sociales
+modeleS <- lm(S ~ A + I + O + C + T + V + Z + taux_de_chomage_au_t4_en + taux_de_pauvrete_en + taux_de_logements_sociaux_en, data = secteur)
+summary(modeleS)
+
+# linear regression to test the effect of the other sectors (controled by demographic indicators), on the sector T : 	Autres techniciens et employés
+modeleT <- lm(T ~ A + I + O + S + C + V + Z + taux_de_chomage_au_t4_en + taux_de_pauvrete_en + taux_de_logements_sociaux_en, data = secteur)
+summary(modeleT)
+
+# linear regression to test the effect of the other sectors (controled by demographic indicators), on the sector V : 	Fonctions liées à la vente, au tourisme et aux services
+modeleV <- lm(V ~ A + I + O + S + T + C + Z + taux_de_chomage_au_t4_en + taux_de_pauvrete_en + taux_de_logements_sociaux_en, data = secteur)
+summary(modeleC)
+
+# linear regression to test the effect of the other sectors (controled by demographic indicators), on the sector Z : 	Autres métiers
+modeleZ <- lm(Z ~ A + I + O + S + T + V + C + taux_de_chomage_au_t4_en + taux_de_pauvrete_en + taux_de_logements_sociaux_en, data = secteur)
+summary(modeleZ)
+
+```
+
+Analysis of our results: When it is difficult to hire in one department in sector C, it is also difficult to hire in I and V.
+
+When it is difficult to hire in I, it is slightly difficult to hire in C, T and Z. When it is difficult to hire in V, it is difficult to hire in O and S. Finally when it is difficult to hire in I, it is also in T.
+
+We observe no negative coefficients that are significant : so the difficulty to hire in one sector doesn't impact the difficulty to hire in another one. The sectors don't steal the workforce to each-other. Maybe that could be explained by the fact that the difficulties to recruit are due to the lack of qualification of the workers, for the job recruiters are struggling to hire.
+
+## IV - Conclusion
+
+To conclude, our results show that constructing social housing in a departement does not increase its poverty rate. Indeed, with a lower rent, household should rather be less poor. It does not significantly increase unemployment either. Younger population live in departement with more social housings.
+
+Unemployment and poverty rate strongly tend to go together.
+
+Low unemployment and poverty rates also come with more hiring issues, as labor force is more scarce.
+
+The sectors don't steal workforce from eachother.
+
+## V - Annex
+
+We noticed that in our bassin_emploi database, NA values are marked as \*. We needed to replace \*, so that our environment understands the \* as an indication of missing values.
+
+We only kept observations concerning year 2020 (observed in 2022).
+
+Geographical variables are named with ID codes. We created tables in which we gathered each ID, and the name to which it is associated.
+
+```{r, message = FALSE, echo = FALSE}
+
+job_id <- bassin_emploi1 |>
+  distinct(metier, nommetier)
+
+job_id |>
+  knitr::kable()
+
+job_fam_id <- bassin_emploi1 |>
+  distinct(Famille_met, Lbl_fam_met)
+
+job_fam_id |>
+    knitr::kable()
+
+laborpool_id <- bassin_emploi1 |>
+  distinct(BE20,NOMBE20)
+
+laborpool_id |>
+    knitr::kable()
+```
+
+Our common variable is the department variable. Let's display the table containing the IDs associated with the name of the departments.
+
+```{r, message = FALSE, echo = FALSE}
+dpt_id |>
+  knitr::kable() 
+```
+
+Link to the sources:
+
+-   <https://www.pole-emploi.org/files/live/sites/peorg/files/documents/Statistiques-et-analyses/Open-data/BMO/Donnees_consolidees_2023.zip>.
+
+-   <https://www.data.gouv.fr/fr/datasets/logements-et-logements-sociaux-dans-les-departements-1/>.
+
+Link to our github repository:
